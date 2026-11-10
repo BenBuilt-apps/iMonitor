@@ -1,8 +1,144 @@
-👶 iMonitor
-Private baby camera • local Wi-Fi or hotspot
-Choose a role to begin.
-Choose this device's role
-📷 Camera👀 Monitor
-Use your iPhone or iPad for either role.
-Start over
-Encrypted direct WebRTC streaming; public PeerJS service handles PIN pairing metadata, not media. Internet required for PIN pairing. A 4-digit PIN is weak: approve only your device. Direct connection may fail on restricted networks. No cloud recording. This is experimental, not a sole unattended baby monitor.
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#102b35"><meta name="apple-mobile-web-app-capable" content="yes"><title>iMonitor</title><style>body{background:#102b35;color:#f0fffc;font:16px -apple-system,system-ui;margin:0 auto;padding:20px;max-width:650px}h1{margin-bottom:0}.sub{color:#b4d4d3}.card{background:#21434d;padding:18px;border-radius:16px;margin:16px 0}button{background:#6ce4c1;color:#092a2b;border:0;border-radius:12px;padding:13px;margin:5px 5px 5px 0;font-weight:700;font-size:16px}button.alt{background:#456773;color:white}textarea{width:100%;box-sizing:border-box;height:105px;border-radius:8px;background:#0b2831;color:white;padding:10px}video{width:100%;background:black;border-radius:10px;max-height:60vh;object-fit:contain}input{font-size:26px;letter-spacing:6px;text-align:center;padding:12px;width:90%;background:#0b2831;color:white;border:1px solid #8cb0b0;border-radius:10px}#local{display:block;min-height:170px}.note{font-size:13px;color:#b4d4d3}.hide{display:none}.warn{color:#ffe2a2}#status{background:#345c64;padding:12px;border-radius:9px}</style></head><body><h1>👶 iMonitor</h1><p class="sub">Private baby camera • local Wi-Fi or hotspot</p><p id="status">Choose a role to begin.</p><section id="home" class="card"><h2>Choose this device's role</h2><button onclick="camera()">📷 Camera</button><button onclick="viewer()">👀 Monitor</button><p>Use your iPhone or iPad for either role.</p></section><section id="cam" class="hide"><div class="card"><h2>Camera</h2><video id="local" autoplay muted playsinline></video><button onclick="flip()">🔄 Switch front/rear camera</button><button class="alt" onclick="preview()">▶ Refresh preview</button><p id="facing">Rear camera selected</p><p class="warn">Keep this device unlocked, awake, and plugged in safely away from your child's reach.</p></div><div class="card"><h2>Pair with monitor</h2><p>Enter this PIN on the monitor:</p><h1 id="pinDisplay">Starting…</h1><div id="approval" class="hide"><p>Another device wants to view this camera. Approve?</p><button onclick="approve()">Approve viewer</button><button class="alt" onclick="reject()">Reject</button></div><details><summary>Manual pairing fallback (original method)</summary><p>Paste the request from the monitor:</p><textarea id="requestIn" placeholder="Paste request"></textarea><button onclick="answer()">Accept request</button><p>Copy this reply to the monitor:</p><textarea id="replyOut" readonly></textarea><button class="alt" onclick="copy('replyOut')">Copy reply</button></details></div></section><section id="mon" class="hide"><div class="card"><h2>Live monitor</h2><video id="remote" autoplay playsinline controls></video><button onclick="sound()">▶ Play video + sound</button><p id="diagnostics" class="note">Video diagnostics will appear here.</p><button class="alt" onclick="full()">Full screen</button><p class="warn">Keep this page open. Browser backgrounding and device locking can stop monitoring and alerts.</p></div><div class="card"><h2>Pair with camera</h2><p>Enter the camera PIN:</p><input id="pinInput" inputmode="numeric" maxlength="4" placeholder="0000"><button onclick="join()">Connect using PIN</button><details><summary>Manual pairing fallback (original method)</summary><button onclick="offer()">1. Create request</button><textarea id="requestOut" readonly></textarea><button class="alt" onclick="copy('requestOut')">Copy request</button><p>Send request to camera, then paste its reply:</p><textarea id="replyIn" placeholder="Paste camera reply"></textarea><button onclick="connect()">2. Connect</button></details></div></section><div class="card"><button class="alt" onclick="location.reload()">Start over</button><p class="sub">Encrypted direct WebRTC streaming; public PeerJS service handles PIN pairing metadata, not media. Internet required for PIN pairing. A 4-digit PIN is weak: approve only your device. Direct connection may fail on restricted networks. No cloud recording. This is experimental, not a sole unattended baby monitor.</p></div><script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js">
+function startSignal(){
+ if(!window.Peer){msg('Camera works. PIN pairing needs internet; use manual fallback.');return}
+ pin=String(Math.floor(1000+Math.random()*9000));
+ signal=new Peer('imonitor-local-'+pin,{debug:0});
+ signal.on('open',()=>{el('pinDisplay').textContent=pin;msg('Camera ready • enter PIN on monitor')});
+ signal.on('error',e=>{if(e.type==='unavailable-id'){pin=String(Math.floor(1000+Math.random()*9000));signal.destroy();startSignal()}else msg('PIN service error — manual pairing still available: '+e.type)});
+ signal.on('connection',c=>{
+  if(channel||pending||pinAttempts>=3){c.close();return}
+  pending=c;pinAttempts++;
+  c.on('data',data=>handleSignal(data,c));
+  c.on('close',()=>{if(channel===c)channel=null;if(pending===c)pending=null});
+  c.on('open',()=>{el('approval').classList.remove('hide');msg('Viewer requesting access — approve on camera')});
+ });
+}
+function approve(){if(!pending?.open)return;channel=pending;pending=null;el('approval').classList.add('hide');channel.send({type:'approved'});msg('Approved • waiting for video request')}
+function reject(){pending?.close();pending=null;el('approval').classList.add('hide');msg('Viewer rejected')}
+function join(){
+ const p=el('pinInput').value.trim();if(!/^\d{4}$/.test(p)){msg('Enter a 4-digit PIN');return}
+ if(!window.Peer){msg('PIN service unavailable; use manual fallback');return}
+ if(signal)signal.destroy();signal=new Peer();
+ signal.on('error',e=>msg('Pairing error: '+e.type));
+ signal.on('open',()=>{
+  channel=signal.connect('imonitor-local-'+p,{reliable:true});
+  channel.on('open',()=>msg('Waiting for camera approval…'));
+  channel.on('data',data=>handleSignal(data,channel));
+  channel.on('error',e=>msg('Pairing error: '+e.message));
+  channel.on('close',()=>msg('Pairing channel closed'));
+ });
+}
+async function handleSignal(data,c){
+ try{
+  if(c!==channel)return;
+  if(data.type==='approved'&&role==='monitor'){
+   // Use EXACT original offer method: wait for ICE completion and send full SDP.
+   await offer();
+  }else if(data.type==='offer'&&role==='camera'){
+   el('requestIn').value=JSON.stringify(data.sdp);
+   // Use EXACT original answer method: wait for ICE completion and send full SDP.
+   await answer();
+  }else if(data.type==='answer'&&role==='monitor'){
+   el('replyIn').value=JSON.stringify(data.sdp);
+   await connect();
+  }
+ }catch(e){fail(e)}
+}
+async function preview(){try{el('local').muted=true;el('local').srcObject=media;await el('local').play();msg('Local camera preview active')}catch(e){fail(e)}}
+async function flip(){
+ if(!media||changing)return;changing=true;
+ const next=facing==='environment'?'user':'environment',old=media.getVideoTracks()[0];
+ try{
+  old.stop();const newer=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:next},width:{ideal:1280}},audio:false});
+  const track=newer.getVideoTracks()[0];
+  // Update remote sender first, keeping original peer connection intact.
+  const sender=pc?.getSenders().find(x=>x.track?.kind==='video');
+  if(sender)await sender.replaceTrack(track);
+  media.removeTrack(old);media.addTrack(track);
+  el('local').srcObject=null;el('local').srcObject=media;await el('local').play();
+  facing=next;el('facing').textContent=next==='user'?'Front camera selected':'Rear camera selected';msg('Camera switched');
+ }catch(e){fail(e)}finally{changing=false}
+}
+function videoDiagnostics(){
+ if(role!=='monitor'||!pc)return;
+ pc.getStats().then(stats=>{
+  let bytes=0,frames=0;stats.forEach(x=>{if(x.type==='inbound-rtp'&&(x.kind==='video'||x.mediaType==='video')){bytes+=x.bytesReceived||0;frames+=x.framesDecoded||0}});
+  const v=el('remote');el('diagnostics').textContent=`Video ${v.videoWidth}×${v.videoHeight} • bytes received ${bytes} • frames decoded ${frames}`;
+ }).catch(()=>{});
+ setTimeout(videoDiagnostics,3000);
+}
+</script><script>
+let pc,media,role,lock,watch,signal,channel,pending,facing='environment',changing=false,pin='',pinAttempts=0;const el=id=>document.getElementById(id);function msg(s){el('status').textContent=s}function fail(e){msg('⚠️ '+(e.message||e))}function show(r){role=r;el('home').classList.add('hide');el(r==='camera'?'cam':'mon').classList.remove('hide')}async function wake(){try{lock=await navigator.wakeLock.request('screen')}catch(e){}}document.addEventListener('visibilitychange',()=>{if(!document.hidden&&role==='camera')wake()});async function camera(){show('camera');try{media=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280}},audio:{echoCancellation:true}});el('local').srcObject=media;el('local').play().catch(()=>{});wake();startSignal();msg('Camera ready — wait for monitor request')}catch(e){fail(e)}}function viewer(){show('monitor');msg('Enter the 4-digit PIN on the camera')}
+function peer(){if(pc)pc.close();pc=new RTCPeerConnection({iceServers:[]});pc.onconnectionstatechange=()=>{let s=pc.connectionState;if(s==='connected'){msg('🟢 Live — connected');if(role==='monitor'){watchVideo();videoDiagnostics()}}else if(['failed','disconnected','closed'].includes(s))msg('🔴 Connection lost — tap Start over to reconnect');else msg('Connection: '+s)};if(role==='camera'){if(!media)throw Error('Camera is not ready');media.getTracks().forEach(t=>pc.addTrack(t,media))}else{pc.addTransceiver('video',{direction:'recvonly'});pc.addTransceiver('audio',{direction:'recvonly'});pc.ontrack=e=>{let v=el('remote');if(e.streams[0])v.srcObject=e.streams[0];else{let s=v.srcObject||new MediaStream();s.addTrack(e.track);v.srcObject=s}v.muted=true;v.play().catch(()=>msg('Tap Enable sound to start playback'))}}}
+function ice(){return new Promise((resolve,reject)=>{if(pc.iceGatheringState==='complete')return resolve();let t=setTimeout(()=>reject(Error('Network discovery timed out')),20000);function change(){if(pc.iceGatheringState==='complete'){clearTimeout(t);pc.removeEventListener('icegatheringstatechange',change);resolve()}}pc.addEventListener('icegatheringstatechange',change)})}function read(id,type){let v;try{v=JSON.parse(el(id).value.trim())}catch(e){throw Error('Invalid connection text. Copy the entire message.')}if(v.type!==type||typeof v.sdp!=='string')throw Error('Wrong connection message');return v}
+async function offer(){try{peer();await pc.setLocalDescription(await pc.createOffer());await ice();el('requestOut').value=JSON.stringify(pc.localDescription);if(channel?.open){channel.send({type:'offer',sdp:pc.localDescription});msg('Request sent — waiting for camera')}else msg('Request ready — copy it to camera')}catch(e){fail(e)}}async function answer(){try{peer();await pc.setRemoteDescription(read('requestIn','offer'));await pc.setLocalDescription(await pc.createAnswer());await ice();el('replyOut').value=JSON.stringify(pc.localDescription);if(channel?.open){channel.send({type:'answer',sdp:pc.localDescription});msg('Reply sent — connecting video')}else msg('Reply ready — copy it to monitor')}catch(e){fail(e)}}async function connect(){try{if(!pc)throw Error('Create a request first');await pc.setRemoteDescription(read('replyIn','answer'));msg('Connecting…')}catch(e){fail(e)}}async function copy(id){try{await navigator.clipboard.writeText(el(id).value);alert('Copied. Send to your other device.')}catch(e){el(id).select();alert('Select and copy the text manually.')}}async function sound(){try{let v=el('remote');v.muted=false;await v.play();msg('🔊 Audio enabled')}catch(e){fail(e)}}function full(){let v=el('remote');if(v.webkitEnterFullscreen)v.webkitEnterFullscreen();else if(v.requestFullscreen)v.requestFullscreen()}function watchVideo(){clearInterval(watch);let previous=-1,stale=0;watch=setInterval(()=>{if(document.hidden||!pc||pc.connectionState!=='connected')return;let v=el('remote');if(v.readyState>=2){stale=v.currentTime===previous?stale+1:0;previous=v.currentTime;if(stale>=5)msg('⚠️ Video may be frozen — check camera')}},2000)}
+
+function startSignal(){
+ if(!window.Peer){msg('Camera works. PIN pairing needs internet; use manual fallback.');return}
+ pin=String(Math.floor(1000+Math.random()*9000));
+ signal=new Peer('imonitor-local-'+pin,{debug:0});
+ signal.on('open',()=>{el('pinDisplay').textContent=pin;msg('Camera ready • enter PIN on monitor')});
+ signal.on('error',e=>{if(e.type==='unavailable-id'){pin=String(Math.floor(1000+Math.random()*9000));signal.destroy();startSignal()}else msg('PIN service error — manual pairing still available: '+e.type)});
+ signal.on('connection',c=>{
+  if(channel||pending||pinAttempts>=3){c.close();return}
+  pending=c;pinAttempts++;
+  c.on('data',data=>handleSignal(data,c));
+  c.on('close',()=>{if(channel===c)channel=null;if(pending===c)pending=null});
+  c.on('open',()=>{el('approval').classList.remove('hide');msg('Viewer requesting access — approve on camera')});
+ });
+}
+function approve(){if(!pending?.open)return;channel=pending;pending=null;el('approval').classList.add('hide');channel.send({type:'approved'});msg('Approved • waiting for video request')}
+function reject(){pending?.close();pending=null;el('approval').classList.add('hide');msg('Viewer rejected')}
+function join(){
+ const p=el('pinInput').value.trim();if(!/^\d{4}$/.test(p)){msg('Enter a 4-digit PIN');return}
+ if(!window.Peer){msg('PIN service unavailable; use manual fallback');return}
+ if(signal)signal.destroy();signal=new Peer();
+ signal.on('error',e=>msg('Pairing error: '+e.type));
+ signal.on('open',()=>{
+  channel=signal.connect('imonitor-local-'+p,{reliable:true});
+  channel.on('open',()=>msg('Waiting for camera approval…'));
+  channel.on('data',data=>handleSignal(data,channel));
+  channel.on('error',e=>msg('Pairing error: '+e.message));
+  channel.on('close',()=>msg('Pairing channel closed'));
+ });
+}
+async function handleSignal(data,c){
+ try{
+  if(c!==channel)return;
+  if(data.type==='approved'&&role==='monitor'){
+   // Use EXACT original offer method: wait for ICE completion and send full SDP.
+   await offer();
+  }else if(data.type==='offer'&&role==='camera'){
+   el('requestIn').value=JSON.stringify(data.sdp);
+   // Use EXACT original answer method: wait for ICE completion and send full SDP.
+   await answer();
+  }else if(data.type==='answer'&&role==='monitor'){
+   el('replyIn').value=JSON.stringify(data.sdp);
+   await connect();
+  }
+ }catch(e){fail(e)}
+}
+async function preview(){try{el('local').muted=true;el('local').srcObject=media;await el('local').play();msg('Local camera preview active')}catch(e){fail(e)}}
+async function flip(){
+ if(!media||changing)return;changing=true;
+ const next=facing==='environment'?'user':'environment',old=media.getVideoTracks()[0];
+ try{
+  old.stop();const newer=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:next},width:{ideal:1280}},audio:false});
+  const track=newer.getVideoTracks()[0];
+  // Update remote sender first, keeping original peer connection intact.
+  const sender=pc?.getSenders().find(x=>x.track?.kind==='video');
+  if(sender)await sender.replaceTrack(track);
+  media.removeTrack(old);media.addTrack(track);
+  el('local').srcObject=null;el('local').srcObject=media;await el('local').play();
+  facing=next;el('facing').textContent=next==='user'?'Front camera selected':'Rear camera selected';msg('Camera switched');
+ }catch(e){fail(e)}finally{changing=false}
+}
+function videoDiagnostics(){
+ if(role!=='monitor'||!pc)return;
+ pc.getStats().then(stats=>{
+  let bytes=0,frames=0;stats.forEach(x=>{if(x.type==='inbound-rtp'&&(x.kind==='video'||x.mediaType==='video')){bytes+=x.bytesReceived||0;frames+=x.framesDecoded||0}});
+  const v=el('remote');el('diagnostics').textContent=`Video ${v.videoWidth}×${v.videoHeight} • bytes received ${bytes} • frames decoded ${frames}`;
+ }).catch(()=>{});
+ setTimeout(videoDiagnostics,3000);
+}
+</script></body></html>
